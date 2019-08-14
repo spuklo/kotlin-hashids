@@ -1,10 +1,7 @@
-@file:Suppress("DuplicatedCode")
-
 package org.hashids
 
 import java.lang.Long.toHexString
 import java.util.ArrayList
-import java.util.regex.Pattern
 import kotlin.math.ceil
 import kotlin.math.pow
 
@@ -23,7 +20,6 @@ class Hashids2(salt: String = defaultSalt,
 
         private const val emptyString = ""
         private const val maxNumber = 9007199254740992
-        private val hexRegex = "^[0-9a-fA-F]+$".toRegex()
     }
 
     private val finalSalt = whatSalt(salt)
@@ -55,20 +51,20 @@ class Hashids2(salt: String = defaultSalt,
 
     private fun guardIndex(numbersHash: Int, returnString: String, index: Int): Int = (numbersHash + returnString.toCharArray()[index].toInt()).rem(finalGuards.length)
 
-    private fun addGuardsIfNecessary(encodedString: String, numbersHash: Int): String = if (encodedString.length < finalHashLength) {
-        val guard0 = finalGuards.toCharArray()[guardIndex(numbersHash, encodedString, 0)]
-        val retString = guard0.plus(encodedString)
+    private fun addGuardsIfNecessary(encodedString: String, numbersHash: Int): String =
+            if (encodedString.length < finalHashLength) {
+                val guard0 = finalGuards.toCharArray()[guardIndex(numbersHash, encodedString, 0)]
+                val retString = guard0.plus(encodedString)
 
-        if (retString.length < finalHashLength) {
-            val guard2 = finalGuards.toCharArray()[guardIndex(numbersHash, retString, 2)]
-            retString.plus(guard2)
-        } else {
-            retString
-        }
-    } else {
-        encodedString
-    }
-
+                if (retString.length < finalHashLength) {
+                    val guard2 = finalGuards.toCharArray()[guardIndex(numbersHash, retString, 2)]
+                    retString.plus(guard2)
+                } else {
+                    retString
+                }
+            } else {
+                encodedString
+            }
 
     /**
      * Decrypt string to numbers
@@ -125,20 +121,15 @@ class Hashids2(salt: String = defaultSalt,
      * @param hex the hex string to encrypt
      * @return The encrypted string
      */
-    fun encodeHex(hex: String): String { // TODO re-implement from scratch + add tests
-        if (!hex.matches("^[0-9a-fA-F]+$".toRegex()))
-            return emptyString
-
-        val matched = ArrayList<Long>()
-        val matcher = Pattern.compile("[\\w\\W]{1,12}").matcher(hex)
-
-        while (matcher.find())
-            matched.add(java.lang.Long.parseLong("1" + matcher.group(), 16))
-
-        val result = LongArray(matched.size)
-        for (i in matched.indices) result[i] = matched[i]
-
-        return encode()
+    fun encodeHex(hex: String): String = when {
+        !hex.matches("^[0-9a-fA-F]+$".toRegex()) -> emptyString
+        else -> "[\\w\\W]{1,12}".toRegex().findAll(hex)
+                .map { it.groupValues }
+                .flatten()
+                .map { it.toLong(16) }
+                .toList()
+                .toLongArray()
+                .let { encode(*it) }
     }
 
     /**
