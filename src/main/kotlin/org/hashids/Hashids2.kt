@@ -123,13 +123,15 @@ class Hashids2(salt: String = defaultSalt,
      */
     fun encodeHex(hex: String): String = when {
         !hex.matches("^[0-9a-fA-F]+$".toRegex()) -> emptyString
-        else -> "[\\w\\W]{1,12}".toRegex().findAll(hex)
-                .map { it.groupValues }
-                .flatten()
-                .map { it.toLong(16) }
-                .toList()
-                .toLongArray()
-                .let { encode(*it) }
+        else -> {
+            val toEncode = "[\\w\\W]{1,12}".toRegex().findAll(hex)
+                    .map { it.groupValues }
+                    .flatten()
+                    .map { it.toLong(16) }
+                    .toList()
+                    .toLongArray()
+            encode(*toEncode)
+        }
     }
 
     /**
@@ -179,33 +181,30 @@ class Hashids2(salt: String = defaultSalt,
 
     private fun calculateAlphabetAndSeparators(userAlphabet: String): AlphabetAndSeparators {
         val uniqueAlphabet = unique(userAlphabet)
-        if (uniqueAlphabet.length < minimalAlphabetLength) {
-            throw IllegalArgumentException("alphabet must contain at least $minimalAlphabetLength unique characters")
-        }
-        if (uniqueAlphabet.contains(" ")) {
-            throw IllegalArgumentException("alphabet cannot contains spaces")
-        }
+        when {
+            uniqueAlphabet.length < minimalAlphabetLength -> throw IllegalArgumentException("alphabet must contain at least $minimalAlphabetLength unique characters")
+            uniqueAlphabet.contains(" ") -> throw IllegalArgumentException("alphabet cannot contains spaces")
+            else -> {
+                val legalSeparators = defaultSeparators.toSet().intersect(uniqueAlphabet.toSet())
+                val alphabetWithoutSeparators = uniqueAlphabet.toSet().minus(legalSeparators).joinToString(emptyString)
+                val shuffledSeparators = consistentShuffle(legalSeparators.joinToString(emptyString), finalSalt)
+                val (adjustedAlphabet, adjustedSeparators) = adjustAlphabetAndSeparators(alphabetWithoutSeparators, shuffledSeparators)
 
-        val legalSeparators = defaultSeparators.toSet().intersect(uniqueAlphabet.toSet())
-        val alphabetWithoutSeparators = uniqueAlphabet.toSet().minus(legalSeparators).joinToString(emptyString)
-        val shuffledSeparators = consistentShuffle(legalSeparators.joinToString(emptyString), finalSalt)
-
-        val (adjustedAlphabet, adjustedSeparators) = adjustAlphabetAndSeparators(alphabetWithoutSeparators, shuffledSeparators)
-
-        val guardCount = ceil(adjustedAlphabet.length.toDouble() / guardDiv).toInt()
-        return if (adjustedAlphabet.length < 3) {
-            val guards = adjustedSeparators.substring(0, guardCount)
-            val seps = adjustedSeparators.substring(guardCount)
-            AlphabetAndSeparators(adjustedAlphabet, seps, guards)
-        } else {
-            val guards = adjustedAlphabet.substring(0, guardCount)
-            val alphabet = adjustedAlphabet.substring(guardCount)
-            AlphabetAndSeparators(alphabet, adjustedSeparators, guards)
+                val guardCount = ceil(adjustedAlphabet.length.toDouble() / guardDiv).toInt()
+                return if (adjustedAlphabet.length < 3) {
+                    val guards = adjustedSeparators.substring(0, guardCount)
+                    val seps = adjustedSeparators.substring(guardCount)
+                    AlphabetAndSeparators(adjustedAlphabet, seps, guards)
+                } else {
+                    val guards = adjustedAlphabet.substring(0, guardCount)
+                    val alphabet = adjustedAlphabet.substring(guardCount)
+                    AlphabetAndSeparators(alphabet, adjustedSeparators, guards)
+                }
+            }
         }
     }
 
-    private fun adjustAlphabetAndSeparators(alphabetWithoutSeparators: String,
-                                            shuffledSeparators: String): AlphabetAndSeparators =
+    private fun adjustAlphabetAndSeparators(alphabetWithoutSeparators: String, shuffledSeparators: String): AlphabetAndSeparators =
             if (shuffledSeparators.isEmpty() ||
                     (alphabetWithoutSeparators.length / shuffledSeparators.length).toFloat() > separatorDiv) {
 
@@ -237,8 +236,6 @@ class Hashids2(salt: String = defaultSalt,
         }
     }
 
-    private fun unique(input: String) = input.toSet().joinToString(emptyString)
-
     private tailrec fun shuffle(data: ShuffleData, currentPosition: Int, limit: Int): ShuffleData = when {
         currentPosition < limit -> data
         else -> {
@@ -254,6 +251,8 @@ class Hashids2(salt: String = defaultSalt,
         }
     }
 
+    private fun unique(input: String) = input.toSet().joinToString(emptyString)
+
     private tailrec fun initialEncode(numbers: List<Long>,
                                       salt: String,
                                       separators: CharArray,
@@ -263,7 +262,7 @@ class Hashids2(salt: String = defaultSalt,
                                       currentReturnString: String): String = when {
         currentIndex < numbers.size -> {
             val currentNumber = numbers[currentIndex]
-            val buffer = bufferSeed.plus(salt).plus(alphabet) // use string interpolation?
+            val buffer = "$bufferSeed$salt$alphabet"
             val nextAlphabet = consistentShuffle(alphabet, buffer.substring(0, alphabet.length))
             val last = hash(currentNumber, nextAlphabet)
 
