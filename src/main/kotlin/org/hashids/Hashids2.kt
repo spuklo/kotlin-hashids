@@ -6,6 +6,7 @@ import java.lang.Long.toHexString
 import java.util.ArrayList
 import java.util.regex.Pattern
 import kotlin.math.ceil
+import kotlin.math.pow
 
 class Hashids2(salt: String = defaultSalt,
                length: Int = defaultMinimalHashLength,
@@ -19,8 +20,10 @@ class Hashids2(salt: String = defaultSalt,
         const val minimalAlphabetLength = 16
         const val separatorDiv = 3.5
         const val guardDiv = 12
+
         private const val emptyString = ""
         private const val maxNumber = 9007199254740992
+        private val hexRegex = "^[0-9a-fA-F]+$".toRegex()
     }
 
     private val finalSalt = whatSalt(salt)
@@ -32,7 +35,7 @@ class Hashids2(salt: String = defaultSalt,
 
     val version = "1.0.0"
 
-    fun encode(vararg numbers: Long) = when {
+    fun encode(vararg numbers: Long): String = when {
         numbers.isEmpty() -> emptyString
         numbers.any { it > maxNumber } -> throw IllegalArgumentException("Number can not be greater than ${maxNumber}L")
         else -> {
@@ -148,33 +151,30 @@ class Hashids2(salt: String = defaultSalt,
             .map { toHexString(it).substring(1) }
             .toString()
 
-    private fun hash(input: Long, alphabet: String): String {
-        var current = input
-        var hash = ""
-        val length = alphabet.length
-        val array = alphabet.toCharArray()
+    private fun hash(input: Long, alphabet: String): String =
+            doHash(input, alphabet.toCharArray(), HashData(emptyString, input)).hash
 
-        do {
-            hash = array[(current % length.toLong()).toInt()] + hash
-            current /= length
-        } while (current > 0)
-
-        return hash
-    }
-
-    private fun unhash(input: String, alphabet: String): Long {
-        var number: Long = 0
-        var position: Long
-        val inputArray = input.toCharArray()
-        val length = input.length - 1
-
-        for (i in 0..length) {
-            position = alphabet.indexOf(inputArray[i]).toLong()
-            number += (position.toDouble() * Math.pow(alphabet.length.toDouble(), (input.length - i - 1).toDouble())).toLong()
+    private tailrec fun doHash(number: Long, alphabet: CharArray, data: HashData): HashData = when {
+        data.current > 0 -> {
+            val newHashCharacter = alphabet[(data.current % alphabet.size.toLong()).toInt()]
+            val newCurrent = data.current / alphabet.size
+            doHash(number, alphabet, HashData("$newHashCharacter${data.hash}", newCurrent))
         }
-
-        return number
+        else -> data
     }
+
+    private fun unhash(input: String, alphabet: String): Long =
+            doUnhash(input.toCharArray(), alphabet, alphabet.length.toDouble(), 0, 0)
+
+    private tailrec fun doUnhash(input: CharArray, alphabet: String, alphabetLengthDouble: Double, currentNumber: Long, currentIndex: Int): Long =
+            when {
+                currentIndex < input.size -> {
+                    val position = alphabet.indexOf(input[currentIndex])
+                    val newNumber = currentNumber + (position * alphabetLengthDouble.pow((input.size - currentIndex - 1))).toLong()
+                    doUnhash(input, alphabet, alphabetLengthDouble, newNumber, currentIndex + 1)
+                }
+                else -> currentNumber
+            }
 
     private fun whatSalt(aSalt: String) = when {
         aSalt.isEmpty() -> defaultSalt
@@ -214,26 +214,24 @@ class Hashids2(salt: String = defaultSalt,
     }
 
     private fun adjustAlphabetAndSeparators(alphabetWithoutSeparators: String,
-                                            shuffledSeparators: String): AlphabetAndSeparators {
+                                            shuffledSeparators: String): AlphabetAndSeparators =
+            if (shuffledSeparators.isEmpty() ||
+                    (alphabetWithoutSeparators.length / shuffledSeparators.length).toFloat() > separatorDiv) {
 
-        return if (shuffledSeparators.isEmpty() ||
-                (alphabetWithoutSeparators.length / shuffledSeparators.length).toFloat() > separatorDiv) {
+                val sepsLength = calculateSeparatorsLength(alphabetWithoutSeparators)
 
-            val sepsLength = calculateSeparatorsLength(alphabetWithoutSeparators)
-
-            if (sepsLength > shuffledSeparators.length) {
-                val difference = sepsLength - shuffledSeparators.length
-                val seps = shuffledSeparators.plus(alphabetWithoutSeparators.substring(0, difference))
-                val alpha = alphabetWithoutSeparators.substring(difference)
-                AlphabetAndSeparators(consistentShuffle(alpha, finalSalt), seps)
+                if (sepsLength > shuffledSeparators.length) {
+                    val difference = sepsLength - shuffledSeparators.length
+                    val seps = shuffledSeparators.plus(alphabetWithoutSeparators.substring(0, difference))
+                    val alpha = alphabetWithoutSeparators.substring(difference)
+                    AlphabetAndSeparators(consistentShuffle(alpha, finalSalt), seps)
+                } else {
+                    val seps = shuffledSeparators.substring(0, sepsLength)
+                    AlphabetAndSeparators(consistentShuffle(alphabetWithoutSeparators, finalSalt), seps)
+                }
             } else {
-                val seps = shuffledSeparators.substring(0, sepsLength)
-                AlphabetAndSeparators(consistentShuffle(alphabetWithoutSeparators, finalSalt), seps)
+                AlphabetAndSeparators(consistentShuffle(alphabetWithoutSeparators, finalSalt), shuffledSeparators)
             }
-        } else {
-            AlphabetAndSeparators(consistentShuffle(alphabetWithoutSeparators, finalSalt), shuffledSeparators)
-        }
-    }
 
     private fun calculateSeparatorsLength(alphabet: String): Int = when (val s = ceil(alphabet.length / separatorDiv).toInt()) {
         1 -> 2
@@ -308,4 +306,7 @@ class Hashids2(salt: String = defaultSalt,
 }
 
 private data class AlphabetAndSeparators(val alphabet: String, val separators: String, val guards: String = "")
+
 private data class ShuffleData(val alphabet: List<Char>, val salt: String, val cumulative: Int, val saltReminder: Int)
+
+private data class HashData(val hash: String, val current: Long)
