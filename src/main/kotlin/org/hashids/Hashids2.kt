@@ -1,18 +1,14 @@
 package org.hashids
 
 import java.lang.Long.toHexString
-import java.util.ArrayList
 import kotlin.math.ceil
 import kotlin.math.pow
 
-class Hashids2(salt: String = defaultSalt,
-               length: Int = defaultMinimalHashLength,
-               userAlphabet: String = defaultAlphabet) {
+class Hashids2(salt: String = defaultSalt, length: Int = defaultMinimalHashLength, userAlphabet: String = defaultAlphabet) {
     companion object {
         const val defaultSalt = ""
         const val defaultMinimalHashLength = 0
         const val defaultAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
-
         const val defaultSeparators = "cfhistuCFHISTU"
         const val minimalAlphabetLength = 16
         const val separatorDiv = 3.5
@@ -31,16 +27,22 @@ class Hashids2(salt: String = defaultSalt,
 
     val version = "1.0.0"
 
+    /**
+     * Encodes numbers to string
+     *
+     * @param numbers the numbers to encode
+     * @return The encoded string
+     */
     fun encode(vararg numbers: Long): String = when {
         numbers.isEmpty() -> emptyString
         numbers.any { it > maxNumber } -> throw IllegalArgumentException("Number can not be greater than ${maxNumber}L")
         else -> {
             val numbersHash = numbers.indices
-                    .map { (numbers[it].rem((it + 100))).toInt() }
+                    .map { (numbers[it] % (it + 100)).toInt() }
                     .sum()
 
-            val initialCharacter = finalAlphabet.toCharArray()[numbersHash.rem(finalAlphabet.length)]
-            val encodedString = initialEncode(numbers.asList(), finalSalt, finalSeparators.toCharArray(), "$initialCharacter", 0, finalAlphabet, "$initialCharacter")
+            val initialCharacter = finalAlphabet.toCharArray()[numbersHash % finalAlphabet.length]
+            val encodedString = initialEncode(numbers.asList(), finalSeparators.toCharArray(), initialCharacter.toString(), 0, finalAlphabet, initialCharacter.toString())
             val tempReturnString = addGuardsIfNecessary(encodedString, numbersHash)
             val halfLength = finalAlphabet.length / 2
             val alphabet = consistentShuffle(finalAlphabet, finalAlphabet)
@@ -49,16 +51,16 @@ class Hashids2(salt: String = defaultSalt,
         }
     }
 
-    private fun guardIndex(numbersHash: Int, returnString: String, index: Int): Int = (numbersHash + returnString.toCharArray()[index].toInt()).rem(finalGuards.length)
+    private fun guardIndex(numbersHash: Int, returnString: String, index: Int): Int = (numbersHash + returnString.toCharArray()[index].toInt()) % finalGuards.length
 
     private fun addGuardsIfNecessary(encodedString: String, numbersHash: Int): String =
             if (encodedString.length < finalHashLength) {
                 val guard0 = finalGuards.toCharArray()[guardIndex(numbersHash, encodedString, 0)]
-                val retString = guard0.plus(encodedString)
+                val retString = guard0 + encodedString
 
                 if (retString.length < finalHashLength) {
                     val guard2 = finalGuards.toCharArray()[guardIndex(numbersHash, retString, 2)]
-                    retString.plus(guard2)
+                    retString + guard2
                 } else {
                     retString
                 }
@@ -67,59 +69,60 @@ class Hashids2(salt: String = defaultSalt,
             }
 
     /**
-     * Decrypt string to numbers
+     * Decodes string to numbers
      *
-     * @param hash the encrypt string
-     * @return Decrypted numbers
+     * @param hash the encoded string
+     * @return Decoded numbers
      */
-    fun decode(hash: String): LongArray {
-        if (hash == "")
-            return LongArray(0)
+    fun decode(hash: String): LongArray = when {
+        hash.isEmpty() -> longArrayOf()
+        else -> {
+            val guardsRegex = "[$finalGuards]".toRegex()
+            val hashWithSpacesInsteadOfGuards = hash.replace(guardsRegex, " ")
+            val initialSplit = hashWithSpacesInsteadOfGuards.split(" ")
 
-        var alphabet = finalAlphabet
-        val retArray = ArrayList<Long>()
+            val (lottery, hashBreakdown) = extractLotteryCharAndHashArray(hashWithSpacesInsteadOfGuards, initialSplit)
+            val returnValue = unhashSubHashes(hashBreakdown.iterator(), lottery, mutableListOf(), finalAlphabet)
 
-        var i = 0
-        val regexp = "[$finalGuards]".toRegex()
-        var hashBreakdown = hash.replace(regexp, " ")
-        var hashArray = hashBreakdown.split(" ")
-
-        if (hashArray.size == 3 || hashArray.size == 2) {
-            i = 1
+            when {
+                encode(*returnValue) != hash -> longArrayOf()
+                else -> returnValue
+            }
         }
+    }
 
-        hashBreakdown = hashArray[i]
-
-        val lottery = hashBreakdown.toCharArray()[0]
-
-        hashBreakdown = hashBreakdown.substring(1)
-        hashBreakdown = hashBreakdown.replace("[$finalSeparators]".toRegex(), " ")
-        hashArray = hashBreakdown.split(" ")
-
-        var buffer: String
-        for (subHash in hashArray) {
-            buffer = lottery + finalSalt + alphabet
-            alphabet = consistentShuffle(alphabet, buffer.substring(0, alphabet.length))
-            retArray.add(unhash(subHash, alphabet))
+    private fun extractLotteryCharAndHashArray(hashWithSpacesInsteadOfGuards: String, initialSplit: List<String>): Pair<Char, List<String>> {
+        val separatorsRegex = "[$finalSeparators]".toRegex()
+        val i = when {
+            initialSplit.size == 2 || initialSplit.size == 3 -> 1
+            else -> 0
         }
+        val lotteryChar = hashWithSpacesInsteadOfGuards[0]
+        val finalBreakdown = initialSplit[i]
+                .substring(1)
+                .replace(separatorsRegex, " ")
+                .split(" ")
+        return Pair(lotteryChar, finalBreakdown)
+    }
 
-        var arr = LongArray(retArray.size)
-        for (index in retArray.indices) {
-            arr[index] = retArray[index]
+    private tailrec fun unhashSubHashes(hashes: Iterator<String>, lottery: Char, currentReturn: MutableList<Long>, alphabet: String): LongArray {
+        return when {
+            hashes.hasNext() -> {
+                val subHash = hashes.next()
+                val buffer = "$lottery$finalSalt$alphabet"
+                val newAlphabet = consistentShuffle(alphabet, buffer.substring(0, alphabet.length))
+                currentReturn.add(unhash(subHash, newAlphabet))
+                unhashSubHashes(hashes, lottery, currentReturn, newAlphabet)
+            }
+            else -> currentReturn.toLongArray()
         }
-
-        if (encode(*arr) != hash) {
-            arr = LongArray(0)
-        }
-
-        return arr
     }
 
     /**
-     * Encrypt hex string to string
+     * Encoded hex string to string
      *
-     * @param hex the hex string to encrypt
-     * @return The encrypted string
+     * @param hex the hex string to encode
+     * @return The encoded string
      */
     fun encodeHex(hex: String): String = when {
         !hex.matches("^[0-9a-fA-F]+$".toRegex()) -> emptyString
@@ -135,10 +138,10 @@ class Hashids2(salt: String = defaultSalt,
     }
 
     /**
-     * Decrypt string to numbers
+     * Decodes string to hex numbers string
      *
-     * @param hash the encrypt string
-     * @return Decrypted numbers
+     * @param hash the encoded string
+     * @return decoded hex numbers string
      */
     fun decodeHex(hash: String): String = decode(hash)
             .map { toHexString(it).substring(1) }
@@ -212,7 +215,7 @@ class Hashids2(salt: String = defaultSalt,
 
                 if (sepsLength > shuffledSeparators.length) {
                     val difference = sepsLength - shuffledSeparators.length
-                    val seps = shuffledSeparators.plus(alphabetWithoutSeparators.substring(0, difference))
+                    val seps = shuffledSeparators + alphabetWithoutSeparators.substring(0, difference)
                     val alpha = alphabetWithoutSeparators.substring(difference)
                     AlphabetAndSeparators(consistentShuffle(alpha, finalSalt), seps)
                 } else {
@@ -240,10 +243,10 @@ class Hashids2(salt: String = defaultSalt,
         currentPosition < limit -> data
         else -> {
             val currentAlphabet = data.alphabet.toCharArray()
-            val saltReminder = data.saltReminder.rem(data.salt.length)
+            val saltReminder = data.saltReminder % data.salt.length
             val asciiValue = data.salt[saltReminder].toInt()
             val cumulativeValue = data.cumulative + asciiValue
-            val positionToSwap = (asciiValue + saltReminder + cumulativeValue).rem(currentPosition)
+            val positionToSwap = (asciiValue + saltReminder + cumulativeValue) % currentPosition
             currentAlphabet[positionToSwap] = currentAlphabet[currentPosition].also {
                 currentAlphabet[currentPosition] = currentAlphabet[positionToSwap]
             }
@@ -254,7 +257,6 @@ class Hashids2(salt: String = defaultSalt,
     private fun unique(input: String) = input.toSet().joinToString(emptyString)
 
     private tailrec fun initialEncode(numbers: List<Long>,
-                                      salt: String,
                                       separators: CharArray,
                                       bufferSeed: String,
                                       currentIndex: Int,
@@ -262,18 +264,18 @@ class Hashids2(salt: String = defaultSalt,
                                       currentReturnString: String): String = when {
         currentIndex < numbers.size -> {
             val currentNumber = numbers[currentIndex]
-            val buffer = "$bufferSeed$salt$alphabet"
+            val buffer = bufferSeed + finalSalt + alphabet
             val nextAlphabet = consistentShuffle(alphabet, buffer.substring(0, alphabet.length))
             val last = hash(currentNumber, nextAlphabet)
 
             val newReturnString = if (currentIndex + 1 < numbers.size) {
-                val nextNumber = currentNumber.rem((last.toCharArray()[0].toInt() + currentIndex))
-                val sepsIndex = (nextNumber.rem(separators.size)).toInt()
-                currentReturnString.plus(last).plus(separators[sepsIndex])
+                val nextNumber = currentNumber % (last.toCharArray()[0].toInt() + currentIndex)
+                val sepsIndex = (nextNumber % separators.size).toInt()
+                currentReturnString + last + separators[sepsIndex]
             } else {
-                currentReturnString.plus(last)
+                currentReturnString + last
             }
-            initialEncode(numbers, salt, separators, bufferSeed, currentIndex + 1, nextAlphabet, newReturnString)
+            initialEncode(numbers, separators, bufferSeed, currentIndex + 1, nextAlphabet, newReturnString)
         }
         else -> currentReturnString
     }
