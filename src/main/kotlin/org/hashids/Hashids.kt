@@ -61,23 +61,6 @@ class Hashids(salt: String = defaultSalt, minHashLength: Int = defaultMinimalHas
         }
     }
 
-    private fun guardIndex(numbersHash: Int, returnString: String, index: Int): Int = (numbersHash + returnString.toCharArray()[index].toInt()) % finalGuards.length
-
-    private fun addGuardsIfNecessary(encodedString: String, numbersHash: Int): String =
-            if (encodedString.length < finalHashLength) {
-                val guard0 = finalGuards.toCharArray()[guardIndex(numbersHash, encodedString, 0)]
-                val retString = guard0 + encodedString
-
-                if (retString.length < finalHashLength) {
-                    val guard2 = finalGuards.toCharArray()[guardIndex(numbersHash, retString, 2)]
-                    retString + guard2
-                } else {
-                    retString
-                }
-            } else {
-                encodedString
-            }
-
     /**
      * Decodes string to numbers
      *
@@ -101,34 +84,7 @@ class Hashids(salt: String = defaultSalt, minHashLength: Int = defaultMinimalHas
         }
     }
 
-    private fun extractLotteryCharAndHashArray(initialSplit: List<String>): Pair<Char, List<String>> {
-        val separatorsRegex = "[$finalSeparators]".toRegex()
-        val i = when {
-            initialSplit.size == 2 || initialSplit.size == 3 -> 1
-            else -> 0
-        }
-        val ithElementOfSplit = initialSplit[i]
-
-        val lotteryChar = ithElementOfSplit.first()
-        val finalBreakdown = ithElementOfSplit
-                .substring(1)
-                .replace(separatorsRegex, space)
-                .split(space)
-        return Pair(lotteryChar, finalBreakdown)
-    }
-
-    private tailrec fun unhashSubHashes(hashes: Iterator<String>, lottery: Char, currentReturn: MutableList<Long>, alphabet: String): LongArray {
-        return when {
-            hashes.hasNext() -> {
-                val subHash = hashes.next()
-                val buffer = "$lottery$finalSalt$alphabet"
-                val newAlphabet = consistentShuffle(alphabet, buffer.substring(0, alphabet.length))
-                currentReturn.add(unhash(subHash, newAlphabet))
-                unhashSubHashes(hashes, lottery, currentReturn, newAlphabet)
-            }
-            else -> currentReturn.toLongArray()
-        }
-    }
+    private fun guardIndex(numbersHash: Int, returnString: String, index: Int): Int = (numbersHash + returnString.toCharArray()[index].toInt()) % finalGuards.length
 
     /**
      * Encoded hex string to string
@@ -158,31 +114,6 @@ class Hashids(salt: String = defaultSalt, minHashLength: Int = defaultMinimalHas
     fun decodeHex(hash: String): String = decode(hash)
             .map { toHexString(it).substring(1) }
             .toString()
-
-    private fun hash(input: Long, alphabet: String): String =
-            doHash(input, alphabet.toCharArray(), HashData(emptyString, input)).hash
-
-    private tailrec fun doHash(number: Long, alphabet: CharArray, data: HashData): HashData = when {
-        data.current > 0 -> {
-            val newHashCharacter = alphabet[(data.current % alphabet.size.toLong()).toInt()]
-            val newCurrent = data.current / alphabet.size
-            doHash(number, alphabet, HashData("$newHashCharacter${data.hash}", newCurrent))
-        }
-        else -> data
-    }
-
-    private fun unhash(input: String, alphabet: String): Long =
-            doUnhash(input.toCharArray(), alphabet, alphabet.length.toDouble(), 0, 0)
-
-    private tailrec fun doUnhash(input: CharArray, alphabet: String, alphabetLengthDouble: Double, currentNumber: Long, currentIndex: Int): Long =
-            when {
-                currentIndex < input.size -> {
-                    val position = alphabet.indexOf(input[currentIndex])
-                    val newNumber = currentNumber + (position * alphabetLengthDouble.pow((input.size - currentIndex - 1))).toLong()
-                    doUnhash(input, alphabet, alphabetLengthDouble, newNumber, currentIndex + 1)
-                }
-                else -> currentNumber
-            }
 
     private fun whatSalt(aSalt: String) = when {
         aSalt.isEmpty() -> defaultSalt
@@ -243,6 +174,77 @@ class Hashids(salt: String = defaultSalt, minHashLength: Int = defaultMinimalHas
         else -> s
     }
 
+    private fun unique(input: String) = input.toSet().joinToString(emptyString)
+
+    private fun addGuardsIfNecessary(encodedString: String, numbersHash: Int): String =
+            if (encodedString.length < finalHashLength) {
+                val guard0 = finalGuards.toCharArray()[guardIndex(numbersHash, encodedString, 0)]
+                val retString = guard0 + encodedString
+
+                if (retString.length < finalHashLength) {
+                    val guard2 = finalGuards.toCharArray()[guardIndex(numbersHash, retString, 2)]
+                    retString + guard2
+                } else {
+                    retString
+                }
+            } else {
+                encodedString
+            }
+
+    private fun extractLotteryCharAndHashArray(initialSplit: List<String>): Pair<Char, List<String>> {
+        val separatorsRegex = "[$finalSeparators]".toRegex()
+        val i = when {
+            initialSplit.size == 2 || initialSplit.size == 3 -> 1
+            else -> 0
+        }
+        val ithElementOfSplit = initialSplit[i]
+
+        val lotteryChar = ithElementOfSplit.first()
+        val finalBreakdown = ithElementOfSplit
+                .substring(1)
+                .replace(separatorsRegex, space)
+                .split(space)
+        return Pair(lotteryChar, finalBreakdown)
+    }
+
+    private tailrec fun unhashSubHashes(hashes: Iterator<String>, lottery: Char, currentReturn: MutableList<Long>, alphabet: String): LongArray {
+        return when {
+            hashes.hasNext() -> {
+                val subHash = hashes.next()
+                val buffer = "$lottery$finalSalt$alphabet"
+                val newAlphabet = consistentShuffle(alphabet, buffer.substring(0, alphabet.length))
+                currentReturn.add(unhash(subHash, newAlphabet))
+                unhashSubHashes(hashes, lottery, currentReturn, newAlphabet)
+            }
+            else -> currentReturn.toLongArray()
+        }
+    }
+
+    private fun hash(input: Long, alphabet: String): String =
+            doHash(input, alphabet.toCharArray(), HashData(emptyString, input)).hash
+
+    private tailrec fun doHash(number: Long, alphabet: CharArray, data: HashData): HashData = when {
+        data.current > 0 -> {
+            val newHashCharacter = alphabet[(data.current % alphabet.size.toLong()).toInt()]
+            val newCurrent = data.current / alphabet.size
+            doHash(number, alphabet, HashData("$newHashCharacter${data.hash}", newCurrent))
+        }
+        else -> data
+    }
+
+    private fun unhash(input: String, alphabet: String): Long =
+            doUnhash(input.toCharArray(), alphabet, alphabet.length.toDouble(), 0, 0)
+
+    private tailrec fun doUnhash(input: CharArray, alphabet: String, alphabetLengthDouble: Double, currentNumber: Long, currentIndex: Int): Long =
+            when {
+                currentIndex < input.size -> {
+                    val position = alphabet.indexOf(input[currentIndex])
+                    val newNumber = currentNumber + (position * alphabetLengthDouble.pow((input.size - currentIndex - 1))).toLong()
+                    doUnhash(input, alphabet, alphabetLengthDouble, newNumber, currentIndex + 1)
+                }
+                else -> currentNumber
+            }
+
     private fun consistentShuffle(alphabet: String, salt: String) = when {
         salt.isEmpty() -> alphabet
         else -> {
@@ -265,8 +267,6 @@ class Hashids(salt: String = defaultSalt, minHashLength: Int = defaultMinimalHas
             shuffle(ShuffleData(currentAlphabet.toList(), data.salt, cumulativeValue, saltReminder + 1), currentPosition - 1, limit)
         }
     }
-
-    private fun unique(input: String) = input.toSet().joinToString(emptyString)
 
     private tailrec fun initialEncode(numbers: List<Long>,
                                       separators: CharArray,
